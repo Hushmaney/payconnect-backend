@@ -2,11 +2,15 @@ import express from "express";
 import axios from "axios";
 import Airtable from "airtable";
 import dotenv from "dotenv";
+import cors from "cors";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+// ✅ Enable CORS for all origins (replace '*' with your Netlify URL for security)
+app.use(cors({ origin: "*" }));
 
 // Airtable setup
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE);
