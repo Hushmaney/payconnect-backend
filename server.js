@@ -42,17 +42,14 @@ app.post("/api/order", async (req, res) => {
           "Data Plan": dataPlan || "",
           "Amount": amount || 0,
           "Status": "Pending",
-          "Hubtel Sent": true,          // ✅ checkbox now always checked
+          "Hubtel Sent": true,
           "Hubtel Response": "",
           "BulkClix Response": ""
         }
       }
     ]);
 
-    // Optional: BulkClix payment placeholder
-    let bulkResponseData = { message: "BulkClix payment placeholder (account not activated)" };
-
-    // ✅ Hubtel SMS via GET request
+    // ✅ Hubtel SMS only to Customer Phone
     try {
       const smsUrl = `https://smsc.hubtel.com/v1/messages/send?clientsecret=${process.env.HUBTEL_CLIENT_SECRET}&clientid=${process.env.HUBTEL_CLIENT_ID}&from=PAYCONNECT&to=${phone}&content=${encodeURIComponent(`Your data purchase of ${dataPlan} for ${recipient} has been processed and will be delivered in 30 minutes to 4 hours. Order ID: ${orderId}. For support, WhatsApp: 233531300654.`)}`;
 
@@ -66,6 +63,9 @@ app.post("/api/order", async (req, res) => {
     } catch (smsError) {
       console.error("Hubtel SMS error:", smsError.response?.data || smsError.message);
     }
+
+    // Optional: BulkClix payment placeholder
+    let bulkResponseData = { message: "BulkClix payment placeholder (account not activated)" };
 
     res.json({
       ok: true,
