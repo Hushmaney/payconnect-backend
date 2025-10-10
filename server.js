@@ -25,12 +25,12 @@ app.get("/test", (req, res) => {
   });
 });
 
-// ✅ Route to handle new orders
+// ✅ Route to handle new orders and initiate BulkClix payment
 app.post("/api/order", async (req, res) => {
   try {
-    const { orderId, email, phone, recipientNumber, dataPlan, amount } = req.body;
+    const { orderId, email, phone, recipientNumber, dataPlan, amount, network } = req.body;
 
-    // Store in Airtable
+    // Store order in Airtable
     const airtableRecord = await table.create([
       {
         fields: {
@@ -41,24 +41,31 @@ app.post("/api/order", async (req, res) => {
           "Data Plan": dataPlan || "",
           "Amount": amount || 0,
           "Status": "Pending",
-          "Hubtel Sent": true,          // ✅ checkbox now always checked
+          "Hubtel Sent": true,          // Checkbox
           "Hubtel Response": "",
           "BulkClix Response": ""
         }
       }
     ]);
 
-    // Optional: Call BulkClix API
+    // Initiate BulkClix Momo payment
     let bulkResponseData = null;
     try {
       const bulkResponse = await axios.post(
-        "https://api.bulkclix.com/api/momo/collection",  // ✅ fixed URL
+        "https://api.bulkclix.com/api/v1/payment-api/momopay",
         {
-          merchant_id: process.env.BULKCLIX_MERCHANT,
-          api_key: process.env.BULKCLIX_API_KEY,
           amount,
-          customer_number: recipientNumber,
-          reference: orderId
+          phone_number: recipientNumber,
+          network: network || "MTN",          // MTN, TELECEL, AIRTELTIGO
+          transaction_id: orderId,
+          callback_url: process.env.BULKCLIX_CALLBACK_URL || "",
+          reference: "PAYCONNECT"
+        },
+        {
+          headers: {
+            "Accept": "application/json",
+            "x-api-key": process.env.BULKCLIX_API_KEY
+          }
         }
       );
       bulkResponseData = bulkResponse.data;
@@ -78,6 +85,33 @@ app.post("/api/order", async (req, res) => {
       ok: false,
       error: error.response?.data || error.message
     });
+  }
+});
+
+// ✅ Webhook route to receive BulkClix payment status
+app.post("/api/bulkclix-webhook", async (req, res) => {
+  try {
+    const { transaction_id, status, phone_number, amount, ext_transaction_id } = req.body;
+
+    // Find Airtable record by Order ID (transaction_id)
+    const records = await table.select({
+      filterByFormula: `{Order ID} = '${transaction_id}'`
+    }).firstPage();
+
+    if (records.length > 0) {
+      const record = records[0];
+
+      // Update Airtable with payment status
+      await table.update(record.id, {
+        "BulkClix Response": JSON.stringify({ status, ext_transaction_id }),
+        "Status": status === "success" ? "Completed" : "Failed"
+      });
+    }
+
+    res.json({ ok: true, message: "Webhook processed successfully" });
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
