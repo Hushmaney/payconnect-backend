@@ -8,7 +8,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Airtable setup
+// ✅ Airtable setup
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE);
 const table = base(process.env.AIRTABLE_TABLE);
 
@@ -25,18 +25,38 @@ app.get("/test", (req, res) => {
   });
 });
 
-// ✅ Example route to handle new orders (update with your logic)
+// ✅ Create new order route
 app.post("/api/order", async (req, res) => {
   try {
     const { orderId, email, phone, recipientNumber, dataPlan, amount } = req.body;
 
-    // Store in Airtable
+    // ✅ Prevent empty fields
+    if (!orderId || !email || !phone || !recipientNumber || !dataPlan || !amount) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing required fields in request body"
+      });
+    }
+
+    // ✅ Check for duplicate order in Airtable
+    const existingOrders = await table.select({
+      filterByFormula: `{Order ID} = "${orderId}"`
+    }).firstPage();
+
+    if (existingOrders.length > 0) {
+      return res.status(409).json({
+        ok: false,
+        message: "Duplicate order — this Order ID already exists"
+      });
+    }
+
+    // ✅ Create record in Airtable
     const airtableRecord = await table.create([
       {
         fields: {
           "Order ID": orderId,
           "Customer Email": email,
-          "Customer phone": phone,
+          "Customer Phone": phone,
           "Data Recipient Number": recipientNumber,
           "Data Plan": dataPlan,
           "Amount": amount,
@@ -48,7 +68,7 @@ app.post("/api/order", async (req, res) => {
       }
     ]);
 
-    // Call Bulkclix API (optional)
+    // ✅ Call Bulkclix API (optional)
     const bulkResponse = await axios.post(
       "https://app.bulkclix.com/api/momo/collection",
       {
@@ -60,6 +80,7 @@ app.post("/api/order", async (req, res) => {
       }
     );
 
+    // ✅ Success response
     res.json({
       ok: true,
       message: "Order created successfully",
@@ -67,7 +88,7 @@ app.post("/api/order", async (req, res) => {
       bulk: bulkResponse.data
     });
   } catch (error) {
-    console.error(error.response?.data || error.message);
+    console.error("❌ Error:", error.response?.data || error.message);
     res.status(500).json({
       ok: false,
       error: error.response?.data || error.message
