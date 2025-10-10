@@ -34,14 +34,14 @@ app.post("/api/order", async (req, res) => {
     const airtableRecord = await table.create([
       {
         fields: {
-          "Order ID": orderId,
-          "Customer Email": email,
-          "Customer Phone": phone,
-          "Data Recipient Number": recipientNumber,
-          "Data Plan": dataPlan,
-          "Amount": amount,
+          "Order ID": orderId || "",
+          "Customer Email": email || "",
+          "Customer Phone": phone || "",
+          "Data Recipient Number": recipientNumber || "",
+          "Data Plan": dataPlan || "",
+          "Amount": amount || 0,
           "Status": "Pending",
-          "Hubtel Sent": "No",
+          "Hubtel Sent": true,          // ✅ checkbox now always checked
           "Hubtel Response": "",
           "BulkClix Response": ""
         }
