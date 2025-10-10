@@ -48,11 +48,11 @@ app.post("/api/order", async (req, res) => {
       }
     ]);
 
-    // Optional: Call BulkClix API (comment out if account not allowed)
+    // Optional: Call BulkClix API
     let bulkResponseData = null;
     try {
       const bulkResponse = await axios.post(
-        "https://app.bulkclix.com/api/momo/collection",
+        "https://api.bulkclix.com/api/momo/collection",  // ✅ fixed URL
         {
           merchant_id: process.env.BULKCLIX_MERCHANT,
           api_key: process.env.BULKCLIX_API_KEY,
