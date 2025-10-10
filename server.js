@@ -20,57 +20,62 @@ app.get("/test", (req, res) => {
     env: {
       BULKCLIX_API_KEY: process.env.BULKCLIX_API_KEY ? "✅ Loaded" : "❌ Missing",
       AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY ? "✅ Loaded" : "❌ Missing",
-      HUBTEL_CLIENT_ID: process.env.HUBTEL_CLIENT_ID ? "✅ Loaded" : "❌ Missing"
+      HUBTEL_CLIENT_ID: process.env.HUBTEL_CLIENT_ID ? "✅ Loaded" : "❌ Missing",
+      HUBTEL_CLIENT_SECRET: process.env.HUBTEL_CLIENT_SECRET ? "✅ Loaded" : "❌ Missing"
     }
   });
 });
 
-// ✅ Route to handle new orders and initiate BulkClix payment
+// ✅ Route to handle new orders
 app.post("/api/order", async (req, res) => {
   try {
-    const { orderId, email, phone, recipientNumber, dataPlan, amount, network } = req.body;
+    const { orderId, email, phone, recipient, dataPlan, amount } = req.body;
 
-    // Store order in Airtable
+    // Store in Airtable
     const airtableRecord = await table.create([
       {
         fields: {
           "Order ID": orderId || "",
           "Customer Email": email || "",
           "Customer Phone": phone || "",
-          "Data Recipient Number": recipientNumber || "",
+          "Data Recipient Number": recipient || "",
           "Data Plan": dataPlan || "",
           "Amount": amount || 0,
           "Status": "Pending",
-          "Hubtel Sent": true,          // Checkbox
+          "Hubtel Sent": true,          // ✅ checkbox now always checked
           "Hubtel Response": "",
           "BulkClix Response": ""
         }
       }
     ]);
 
-    // Initiate BulkClix Momo payment
-    let bulkResponseData = null;
+    // Optional: BulkClix payment placeholder
+    let bulkResponseData = { message: "BulkClix payment placeholder (account not activated)" };
+
+    // ✅ Hubtel SMS
     try {
-      const bulkResponse = await axios.post(
-        "https://api.bulkclix.com/api/v1/payment-api/momopay",
+      const smsResponse = await axios.post(
+        'https://api.hubtel.com/v1/messages/sms/send',
         {
-          amount,
-          phone_number: recipientNumber,
-          network: network || "MTN",          // MTN, TELECEL, AIRTELTIGO
-          transaction_id: orderId,
-          callback_url: process.env.BULKCLIX_CALLBACK_URL || "",
-          reference: "PAYCONNECT"
+          From: 'PAYCONNECT',
+          To: phone,
+          Content: `Your data purchase of ${dataPlan} for ${recipient} has been processed and will be delivered in 30 minutes to 4 hours. Order ID: ${orderId}. For support, WhatsApp: 233531300654.`
         },
         {
           headers: {
-            "Accept": "application/json",
-            "x-api-key": process.env.BULKCLIX_API_KEY
+            Authorization: `Basic ${Buffer.from(`${process.env.HUBTEL_CLIENT_ID}:${process.env.HUBTEL_CLIENT_SECRET}`).toString('base64')}`,
+            'Content-Type': 'application/json'
           }
         }
       );
-      bulkResponseData = bulkResponse.data;
-    } catch (bulkError) {
-      bulkResponseData = { message: bulkError.response?.data?.message || bulkError.message };
+
+      // Update Airtable record with SMS response
+      await table.update(airtableRecord[0].id, {
+        "Hubtel Response": JSON.stringify(smsResponse.data)
+      });
+
+    } catch (smsError) {
+      console.error("Hubtel SMS error:", smsError.response?.data || smsError.message);
     }
 
     res.json({
@@ -79,39 +84,13 @@ app.post("/api/order", async (req, res) => {
       airtable: airtableRecord,
       bulk: bulkResponseData
     });
+
   } catch (error) {
     console.error(error.response?.data || error.message);
     res.status(500).json({
       ok: false,
       error: error.response?.data || error.message
     });
-  }
-});
-
-// ✅ Webhook route to receive BulkClix payment status
-app.post("/api/bulkclix-webhook", async (req, res) => {
-  try {
-    const { transaction_id, status, phone_number, amount, ext_transaction_id } = req.body;
-
-    // Find Airtable record by Order ID (transaction_id)
-    const records = await table.select({
-      filterByFormula: `{Order ID} = '${transaction_id}'`
-    }).firstPage();
-
-    if (records.length > 0) {
-      const record = records[0];
-
-      // Update Airtable with payment status
-      await table.update(record.id, {
-        "BulkClix Response": JSON.stringify({ status, ext_transaction_id }),
-        "Status": status === "success" ? "Completed" : "Failed"
-      });
-    }
-
-    res.json({ ok: true, message: "Webhook processed successfully" });
-  } catch (error) {
-    console.error(error.message);
-    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
