@@ -52,22 +52,11 @@ app.post("/api/order", async (req, res) => {
     // Optional: BulkClix payment placeholder
     let bulkResponseData = { message: "BulkClix payment placeholder (account not activated)" };
 
-    // ✅ Hubtel SMS
+    // ✅ Hubtel SMS via GET request
     try {
-      const smsResponse = await axios.post(
-        'https://api.hubtel.com/v1/messages/sms/send',
-        {
-          From: 'PAYCONNECT',
-          To: phone,
-          Content: `Your data purchase of ${dataPlan} for ${recipient} has been processed and will be delivered in 30 minutes to 4 hours. Order ID: ${orderId}. For support, WhatsApp: 233531300654.`
-        },
-        {
-          headers: {
-            Authorization: `Basic ${Buffer.from(`${process.env.HUBTEL_CLIENT_ID}:${process.env.HUBTEL_CLIENT_SECRET}`).toString('base64')}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      const smsUrl = `https://smsc.hubtel.com/v1/messages/send?clientsecret=${process.env.HUBTEL_CLIENT_SECRET}&clientid=${process.env.HUBTEL_CLIENT_ID}&from=PAYCONNECT&to=${phone}&content=${encodeURIComponent(`Your data purchase of ${dataPlan} for ${recipient} has been processed and will be delivered in 30 minutes to 4 hours. Order ID: ${orderId}. For support, WhatsApp: 233531300654.`)}`;
+
+      const smsResponse = await axios.get(smsUrl);
 
       // Update Airtable record with SMS response
       await table.update(airtableRecord[0].id, {
