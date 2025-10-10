@@ -42,29 +42,42 @@ app.post("/api/start-checkout", async (req, res) => {
     const orderId = "T" + Math.floor(Math.random() * 1e15);
 
     // Call BulkClix API to generate payment link
-    const response = await axios.post(
-      "https://bulkclix.com/api/payment",
-      {
-        amount,
-        phone,
-        email,
-        orderId,
-        description: `Purchase of ${dataPlan} for ${recipient}`
-      },
-      { headers: { Authorization: `Bearer ${process.env.BULKCLIX_API_KEY}` } }
-    );
+    let response;
+    try {
+      response = await axios.post(
+        "https://bulkclix.com/api/payment",
+        {
+          amount,
+          phone,
+          email,
+          orderId,
+          description: `Purchase of ${dataPlan} for ${recipient}`
+        },
+        {
+          headers: { Authorization: `Bearer ${process.env.BULKCLIX_API_KEY}` },
+          timeout: 10000 // 10 seconds timeout
+        }
+      );
+    } catch (apiErr) {
+      console.error("BulkClix API Error:", apiErr.response?.data || apiErr.message);
+      return res.status(500).json({
+        ok: false,
+        error: "BulkClix API error: " + (apiErr.response?.data?.message || apiErr.message)
+      });
+    }
 
     const paymentLink = response.data?.paymentLink;
 
     if (!paymentLink) {
+      console.error("BulkClix response missing paymentLink:", response.data);
       return res.status(500).json({ ok: false, error: "Failed to generate payment link" });
     }
 
     res.json({ ok: true, orderId, paymentLink });
 
   } catch (err) {
-    console.error("Start Checkout Error:", err.response?.data || err.message);
-    res.status(500).json({ ok: false, error: err.response?.data || err.message });
+    console.error("Start Checkout Error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
