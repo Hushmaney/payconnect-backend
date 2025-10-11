@@ -10,7 +10,7 @@ const app = express();
 app.use(express.json());
 app.use(cors()); // allow cross-origin requests from frontend
 
-// Airtable setup
+// ----------------- AIRTABLE SETUP -----------------
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE);
 const table = base(process.env.AIRTABLE_TABLE);
 
@@ -28,34 +28,37 @@ app.get("/test", (req, res) => {
   });
 });
 
-// ----------------- START CHECKOUT -----------------
-// Generates BulkClix payment link
+// ----------------- START CHECKOUT (BulkClix MOMO) -----------------
 app.post("/api/start-checkout", async (req, res) => {
   try {
-    const { email, phone, recipient, dataPlan, amount } = req.body;
+    const { email, phone, recipient, dataPlan, amount, network } = req.body;
 
-    if (!phone || !recipient || !dataPlan || !amount) {
+    if (!phone || !recipient || !dataPlan || !amount || !network) {
       return res.status(400).json({ ok: false, error: "Missing required fields" });
     }
 
-    // Generate temporary Order ID
-    const orderId = "T" + Math.floor(Math.random() * 1e15);
+    // Generate a unique transaction ID
+    const transaction_id = "T" + Math.floor(Math.random() * 1e15);
 
-    // Call BulkClix API to generate payment link
+    // Call BulkClix API to initiate Momo payment
     let response;
     try {
       response = await axios.post(
-        "https://bulkclix.com/api/payment",
+        "https://api.bulkclix.com/api/v1/payment-api/momopay",
         {
           amount,
-          phone,
-          email,
-          orderId,
-          description: `Purchase of ${dataPlan} for ${recipient}`
+          phone_number: phone,
+          network, // "MTN", "TELECEL", or "AIRTELTIGO"
+          transaction_id,
+          callback_url: "https://payconnect-backend.onrender.com/api/payment-webhook",
+          reference: "PAYCONNECT"
         },
         {
-          headers: { Authorization: `Bearer ${process.env.BULKCLIX_API_KEY}` },
-          timeout: 10000 // 10 seconds timeout
+          headers: {
+            "x-api-key": process.env.BULKCLIX_API_KEY,
+            "Accept": "application/json"
+          },
+          timeout: 10000
         }
       );
     } catch (apiErr) {
@@ -66,14 +69,24 @@ app.post("/api/start-checkout", async (req, res) => {
       });
     }
 
-    const paymentLink = response.data?.paymentLink;
-
-    if (!paymentLink) {
-      console.error("BulkClix response missing paymentLink:", response.data);
-      return res.status(500).json({ ok: false, error: "Failed to generate payment link" });
+    // Check BulkClix response
+    const apiData = response.data?.data;
+    if (!apiData || !apiData.transaction_id) {
+      console.error("BulkClix unexpected response:", response.data);
+      return res.status(500).json({ ok: false, error: "Failed to initiate BulkClix payment" });
     }
 
-    res.json({ ok: true, orderId, paymentLink });
+    // ✅ Send successful response back to frontend
+    res.json({
+      ok: true,
+      message: "Payment initiated successfully",
+      data: {
+        transaction_id: apiData.transaction_id,
+        amount: apiData.amount,
+        phone: apiData.phone_number,
+        status: "pending"
+      }
+    });
 
   } catch (err) {
     console.error("Start Checkout Error:", err.message);
@@ -85,33 +98,32 @@ app.post("/api/start-checkout", async (req, res) => {
 // Called by BulkClix after payment confirmation
 app.post("/api/payment-webhook", async (req, res) => {
   try {
-    const { orderId, email, phone, recipient, dataPlan, amount } = req.body;
+    const { amount, status, transaction_id, ext_transaction_id, phone_number } = req.body;
 
-    if (!orderId || !phone || !recipient || !dataPlan || !amount) {
-      return res.status(400).json({ ok: false, error: "Missing required payment data" });
+    if (!transaction_id || !phone_number || !amount || !status) {
+      return res.status(400).json({ ok: false, error: "Missing payment data" });
     }
 
     // 1️⃣ Create Airtable record after confirmed payment
     const airtableRecord = await table.create([
       {
         fields: {
-          "Order ID": orderId,
-          "Customer Email": email || "",
-          "Customer Phone": phone,
-          "Data Recipient Number": recipient,
-          "Data Plan": dataPlan,
+          "Order ID": transaction_id,
+          "Customer Phone": phone_number,
+          "Data Recipient Number": phone_number,
+          "Data Plan": "Unknown",
           "Amount": amount,
-          "Status": "Pending",
+          "Status": status,
           "Hubtel Sent": true,
           "Hubtel Response": "",
-          "BulkClix Response": ""
+          "BulkClix Response": JSON.stringify(req.body)
         }
       }
     ]);
 
     // 2️⃣ Send SMS via Hubtel to Customer Phone
-    const smsContent = `Your data purchase of ${dataPlan} for ${recipient} has been processed and will be delivered in 30 minutes to 4 hours. Order ID: ${orderId}. For support, WhatsApp: 233531300654.`;
-    const smsUrl = `https://smsc.hubtel.com/v1/messages/send?clientsecret=${process.env.HUBTEL_CLIENT_SECRET}&clientid=${process.env.HUBTEL_CLIENT_ID}&from=PAYCONNECT&to=${phone}&content=${encodeURIComponent(smsContent)}`;
+    const smsContent = `Your payment of GHS ${amount} has been received successfully. Order ID: ${transaction_id}. Thank you for using PAYCONNECT.`;
+    const smsUrl = `https://smsc.hubtel.com/v1/messages/send?clientsecret=${process.env.HUBTEL_CLIENT_SECRET}&clientid=${process.env.HUBTEL_CLIENT_ID}&from=PAYCONNECT&to=${phone_number}&content=${encodeURIComponent(smsContent)}`;
 
     const smsResponse = await axios.get(smsUrl);
 
@@ -120,10 +132,31 @@ app.post("/api/payment-webhook", async (req, res) => {
       "Hubtel Response": JSON.stringify(smsResponse.data)
     });
 
-    res.json({ ok: true, message: "Order added to Airtable & SMS sent" });
+    res.json({ ok: true, message: "Payment received & SMS sent" });
 
   } catch (err) {
     console.error("Payment Webhook Error:", err.response?.data || err.message);
+    res.status(500).json({ ok: false, error: err.response?.data || err.message });
+  }
+});
+
+// ----------------- CHECK PAYMENT STATUS -----------------
+app.get("/api/check-status/:transaction_id", async (req, res) => {
+  try {
+    const { transaction_id } = req.params;
+    const response = await axios.get(
+      `https://api.bulkclix.com/api/v1/payment-api/checkstatus/${transaction_id}`,
+      {
+        headers: {
+          "x-api-key": process.env.BULKCLIX_API_KEY,
+          "Accept": "application/json"
+        }
+      }
+    );
+
+    res.json({ ok: true, data: response.data });
+  } catch (err) {
+    console.error("Check Status Error:", err.response?.data || err.message);
     res.status(500).json({ ok: false, error: err.response?.data || err.message });
   }
 });
